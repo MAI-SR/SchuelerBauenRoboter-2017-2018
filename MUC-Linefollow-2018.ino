@@ -1,71 +1,68 @@
 #include <QTRSensors.h>
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
-//#include "utility/Adafruit_MS_PWMServoDriver.h"
 #include <TimerOne.h>
 
-#define nspeed 100
-#define tspeed 60
-#define sspeed 60
+#define nspeed 100                                //define normal speed
+#define tspeed 60                                 //define speed to turn with
+#define sspeed 60                                 //define moving speed while searching
 #define tt 1100
 
-#define rightMotor 'A'
-#define leftMotor 'B'
+#define rightMotor 'A'                            //right Motor identification character
+#define leftMotor 'B'                             //left Motor identification character
 
-#define trigPin 7
-#define echoPin 2
-#define piezo 49
-#define echo_int 0
+#define trigPin 7                                 //Trigger Pin of Ultrasonic Sensor
+#define echoPin 2                                 //Echo Pin of Ultrasonic Sensor
+#define piezo 49                                  //Pin for the Piezo
+#define echo_int 0                                //Interrupt Pin for US
 
-#define TIMER_US 50                                   // 50 uS timer duration 
+#define TIMER_US 50                                   // 50 uS timer duration for US
 #define TICK_COUNTS 4000                              // 200 mS worth of timer ticks
 
-volatile long echo_start = 0;                         // Records start of echo pulse
+volatile long echo_start = 0;                         // Records start time of echo pulse
 volatile int trigger_time_count = 0;                  // Count down counter to trigger pulse time
-volatile int distance = 0;
+volatile int distance = 0;                            // Distance calculated form US
 
-boolean amhindernissvorbei;
-int lastSensor;
-int searchCounter;
+int searchCounter;                                    //Search cycles
 
-#define NUM_SENSORS   8     // number of sensors used
-#define TIMEOUT       2500  // waits for 2500 microseconds for sensor outputs to go low
-#define EMITTER_PIN   22     // this defines the emitter and needs to be here for the sensor to work, i gave it the same pin as one of the sensor pins since it dosent matter (Edit v Leo: it matters if yuo want to switch the IR LEDs off) (Edit v Julius: Changed to A0 to use Serial COM)
+#define NUM_SENSORS   8                               // number of sensors used
+#define TIMEOUT       2500                            // waits for 2500 microseconds for sensor outputs to go low
+#define EMITTER_PIN   22                              // Pin of the Sensor Enable
 QTRSensorsRC qtrrc((unsigned char[]) {
   A8, A9, A10, A11, A12, A13, A14, A15
-}, NUM_SENSORS, TIMEOUT, EMITTER_PIN);
-unsigned int sensorValues[NUM_SENSORS];
-#define black 1200          // lower number is greater reflection => higer=darker
+}, NUM_SENSORS, TIMEOUT, EMITTER_PIN);                // Create Sensor Object
+unsigned int sensorValues[NUM_SENSORS];               // Values read from the sensor will be saved here
+#define black 1200                                    // lower number is greater reflection => higer=darker
 
-Adafruit_MotorShield shield = Adafruit_MotorShield();
-Adafruit_DCMotor *right = shield.getMotor(2);
-Adafruit_DCMotor *left = shield.getMotor(1);
+Adafruit_MotorShield shield = Adafruit_MotorShield(); // Create Adafruit MS Object
+Adafruit_DCMotor *right = shield.getMotor(2);         // Create DC Motor object for right motor
+Adafruit_DCMotor *left = shield.getMotor(1);          // Create DC Motor object for left motor
 
-int drivecount = 0;
-boolean linefound;
+int drivecount = 0;                                   // used to know how many times we looked for obstacels
+boolean linefound;                                    // is a line found?
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Init begin!");
-  shield.begin();
-  stop();
+  Serial.begin(115200);                               // Begin Serial COM for Debugging
+  Serial.println("Init begin!");  
+  shield.begin();                                     // Start COM over I2C with Adafruit MS
+  stop();                                             // Stop the bot to prevent moving during Init
 
-  pinMode(trigPin, OUTPUT);
-  pinMode(piezo, OUTPUT);
-  pinMode(echoPin, INPUT);
+  pinMode(trigPin, OUTPUT);                           // Set type of pin IN/OUT
+  pinMode(piezo, OUTPUT);                             // Set type of pin IN/OUT
+  pinMode(echoPin, INPUT);                            // Set type of pin IN/OUT
 
-  Timer1.initialize(TIMER_US);
-  Timer1.attachInterrupt( timerIsr );
-  attachInterrupt(echo_int, echo_interrupt, CHANGE);
+  Timer1.initialize(TIMER_US);                        // Init timer for triggering pulses for US
+  Timer1.attachInterrupt( timerIsr );                 // Set Timer method
+  attachInterrupt(echo_int, echo_interrupt, CHANGE);  // Attach interrupt for US
 
-  delay(5000);
-  while (distance == 0);
+  delay(5000);                                        // Wait a bit to ensure we have a value from the US
+  while (distance == 0);                              // Wait until e we have a value from the US
   Serial.println("Init ended!");
   Serial.println("Debug:");
   Serial.println("Distance: " + distance);
 }
 
-void turnTest() {
+void turnTest() {                                     // JUST FOR TESTING
   turnLeft();
   delay(tt);
   stop();
@@ -86,20 +83,20 @@ void turnTest() {
 
 void loop() {
   Serial.println(distance);
-  if (distance <= 15) {
-    stop();
-    digitalWrite(piezo, HIGH);
-    ausweichen();
+  if (distance <= 17) {
+    stop();                                          // Stop all movements of the bot
+    digitalWrite(piezo, HIGH);                       // Beep a bit
+    ausweichen();                                    // Go to the avoidance Method
   }
 
-  readSensorArrey();
+  readSensorArrey();                                 // Read the SA
 
-  followLineWithTurnOnPoint();
+  followLineWithTurnOnPoint();                       // Execute Line-Follow-Method
 
-  delay(10);
+  delay(10);                                         // Wait a bit so things are not tooo fast
 }
 
-void testMotors() {
+void testMotors() {                                  // JUST FOR TESTING
   forward();
   delay(2000);
   stop();
@@ -148,7 +145,7 @@ void setMotorSpeed(char motor, int motorspeed)    //choose a motor rightMotor or
 }
 
 
-void readSensorArrey() {
+void readSensorArrey() {                    // Read the SA and print debug
   qtrrc.read(sensorValues);
 
   for (int i = 0; i < NUM_SENSORS; i++)
@@ -189,14 +186,15 @@ void stop() {
   left->run(RELEASE);
 }
 
-void search()
-{
-  searchCounter = 0;
+void search() {
+  searchCounter = 0;                                  // Init var or reset it
   Serial.println("Searching line");
-  linefound = false;
-  setMotorSpeed(rightMotor, -sspeed);
-  setMotorSpeed(leftMotor, sspeed);
-  long end = millis() + 400;
+  linefound = false;                                  // Init var or reset it
+  
+  setMotorSpeed(rightMotor, -sspeed);                 // Drive fwd with
+  setMotorSpeed(leftMotor, sspeed);                   // speed defined on top
+  
+  long end = millis() + 400;                          // Using this to avoid missing the line
   while (end >= millis()) {
     readSensorArrey();
     if (anyBlack()) {
@@ -204,12 +202,14 @@ void search()
       break;
     }
   }
+  
   stop();
-  while (linefound == false)
-  {
-    setMotorSpeed(rightMotor, -sspeed);
-    setMotorSpeed(leftMotor, sspeed);
-    long end = millis() + 300;
+  
+  while (linefound == false) {
+    setMotorSpeed(rightMotor, -sspeed);             // Drive fwd with
+    setMotorSpeed(leftMotor, sspeed);               // speed defined on top
+    
+    long end = millis() + 300;                      // Using this to avoid missing the line
     while (end >= millis()) {
       readSensorArrey();
       if (anyBlack()) {
@@ -217,12 +217,13 @@ void search()
         break;
       }
     }
+    
     stop();
 
-    if (linefound) {
+    if (linefound) {                             // Break the while loop and enter normal working
       break;
     }
-    for (int i = 0; i < 2 + searchCounter; i++) {
+    for (int i = 0; i < 2 + searchCounter; i++) {// For every time we don't find the line we go further
       setMotorSpeed(rightMotor, -sspeed);
       setMotorSpeed(leftMotor, 0);
 
@@ -236,11 +237,12 @@ void search()
       }
       stop();
 
-      if (linefound) {
+      if (linefound) {                          // Break the for loop and enter the while loop
         break;
       }
     }
-    for (int i = 0; i < 2 + searchCounter; i++) {
+    
+    for (int i = 0; i < 2 + searchCounter; i++) {// Go exactly the way back we came
       setMotorSpeed(rightMotor, sspeed);
       setMotorSpeed(leftMotor, 0);
 
@@ -254,14 +256,15 @@ void search()
       }
       stop();
 
-      if (linefound) {
+      if (linefound) {                          // Break the for loop and enter the while loop
         break;
       }
     }
-    if (linefound) {
+    
+    if (linefound) {                            // Break the while loop and enter normal working
       break;
     }
-    for (int i = 0; i < 2 + searchCounter; i++) {
+    for (int i = 0; i < 2 + searchCounter; i++) {// For every time we don't find the line we go further
       setMotorSpeed(rightMotor, 0);
       setMotorSpeed(leftMotor, sspeed);
 
@@ -275,11 +278,11 @@ void search()
       }
       stop();
 
-      if (linefound) {
+      if (linefound) {                            // Break the for loop and enter while loop
         break;
       }
     }
-    for (int i = 0; i < 2 + searchCounter; i++) {
+    for (int i = 0; i < 2 + searchCounter; i++) {// Go exactly the way back we came
       setMotorSpeed(rightMotor, 0);
       setMotorSpeed(leftMotor, -sspeed);
 
@@ -293,68 +296,68 @@ void search()
       }
       stop();
 
-      if (linefound) {
+      if (linefound) {                          // Break the for loop and enter while loop
         break;
       }
     }
-    searchCounter++;
+    searchCounter++;                            //increase the var so we turn furter
   }
 }
 
-boolean anyBlack() {
+boolean anyBlack() {                            // spimple logic comparison to check if any sensor has a value that is black
   return sensorValues[0] > black || sensorValues[1] > black || sensorValues[2] > black || sensorValues[3] > black || sensorValues[4] > black || sensorValues[5] > black || sensorValues[6] > black || sensorValues[7] > black;
 }
 
 void followLineWithTurnOnPoint() {
-  if (sensorValues[3] >= black || sensorValues[4] >= black) {
+  if (sensorValues[3] >= black || sensorValues[4] >= black) {                                     // If line is in the middle
     forward();
-  } else if (sensorValues[5] >= black || sensorValues[6] >= black || sensorValues[7] >= black) {
+  } else if (sensorValues[5] >= black || sensorValues[6] >= black || sensorValues[7] >= black) {  // If line is on the right
     turnRight();
     delay(200);
-  } else if (sensorValues[0] >= black || sensorValues[1] >= black || sensorValues[2] >= black) {
+  } else if (sensorValues[0] >= black || sensorValues[1] >= black || sensorValues[2] >= black) {  // If line is left
     turnLeft();
     delay(200);
-  } else {
+  } else {                                                                                        // If line is nowhere
     search();
   }
 }
 
-void ausweichen () {
+void ausweichen () {                            // Obstacle avoidance method
   Serial.println("Ausweichen");
   delay(400);
-  digitalWrite(piezo,LOW);
-  turnLeft();
-  delay (tt);
-  stop();
-  delay(400);
-  forward();
+  digitalWrite(piezo,LOW);                      // Shut off that beeping
+  turnRight();                                   // Turn left for 'tt' seconds to get 90*
+  delay (tt-100);
+  stop();                                       // Stop the bot
+  delay(400);                                   // Wait to be sure we're standing still
+  forward();                                    // Forward long enough so we should have passed the obstacle
   delay(1300);
-  stop();
-  delay(400);
-  turnRight();
-  delay (tt - 250);
-  stop();
-  delay(400);
-  if (distance <= 15) {
-    drivecount++;
-    ausweichen();
+  stop();                                       // Stop the bot
+  delay(400);                                   // Wait to be sure we're standing still
+  turnLeft();                                  // Turn back to face the obstacle
+  delay (tt + 100);
+  stop();                                       // Stop the bot
+  delay(400);                                   // Wait to be sure we're standing still
+  if (distance <= 15) {                         // If there is still something
+    drivecount++;                                 
+    ausweichen();                               // Recall the method
   } else {
-    forward();
-    delay (2000);
-    stop();
-    delay(200);
-    turnRight();
-    delay (tt - 100);
-    stop();
-    delay(400);
-    forward();
+    forward();                                  // Drive around the obstacle
+    delay (1500);
+    stop();                                     // Stooooop!!!!
+    delay(200);                                 // Wait to be sure we're standing still
+    turnLeft();                                // Drive back to the line
+    delay (tt);
+    stop();                                     // Stop the bot!
+    delay(400);                                 // Wait to be sure we're standing still
+    forward();                                  // Drive fwd until we find the line
     readSensorArrey();
     while(!anyBlack()) {
       readSensorArrey();
     }
-    stop();
-    delay(400);
-    turnLeft();
+    stop();                                     // Stop the bot
+    delay(400);                                 
+    turnRight();                                 // Turn back to original pos
     delay (tt - 100);
     stop();
     delay(400);
